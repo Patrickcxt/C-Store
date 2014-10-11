@@ -1,0 +1,73 @@
+关于Cstore是一种基于列的数据库，一般用于一次性导入数据，之后大量查询的数据库中，查询效率更快
+目前只针对orders表格和customer表格进行处理，提供较为通用的接口，修改部分代码也可以适用其他表格
+orders主键为ORDERKEY，customer主键为CUSTKEY, orders中包含外键CUSTKEY
+
+暂时提供如下功能：
+1. LOAD tblname       导入数据 两张表格
+2. INDEX tblname      建立索引  整数列（ORDERKEY CUSTKEY）
+3. COMPRESS orders CUSTKEY 压缩数据（RLE编码）+ 外排序
+4. 查询语句， 语法分析过于繁琐无聊，所以对于范围查询只提供ORDERKEY 和 CUSTKEY 的限定范围，单表查询和等值查询只用该表主键，双表查询可选用两个主键
+   （1） 等值查询，SELECT colname ... FROM tablename WHERE key = ?
+   （2） 单表范围查询，SELECT colname(...) FROM tblname  WHERE key > ? (AND key < ?)
+   （3） 双表范围查询，SELECT colname(...) FROM tblname tblname WHERE ORDERKEY > ? AND  ORDERKEY < ? AND CUSTKEY > ? AND CUSTKEY < ?
+  
+
+详细步骤（包括具体查询语句）：
+进入cstore/src/目录下，make一下
+接下来执行每一句查询请先执行 ./db
+功能1：
+功能解释：将data/ 目录下的orders.tbl和customer.tbl文件分成按列存储的文件，所得文件名为tblname_colname,在mydata/目录下，得到是二进制文件，若想查看，请使用对于的C文件，如想查看int类型的文件，运行./checkint,然后出入文件名，结果即在output文件中。
+
+1)导入orders表格：LOAD orders
+               
+要求输入属性字段，直接复制下面粘贴（下同）：
+9
+ORDERKEY      4 INT
+CUSTKEY       4 INT
+ORDERSTATUS   1 STRING
+TOTALPRICE    4 FLOAT
+ORDERDATE     10 STRING
+ORDERPRIORITY 15 STRING
+CLERK         15 STRING
+SHIPPRIORITY  4 INT
+COMMENT       79 STRING
+
+
+2)导入customer表格：LOAD customer
+要求输入属性字段：
+8
+CUSTKEY   4    INT
+NAME      25   STRING
+ADDRESS   40   STRING
+NATIONKEY 4    INT 
+PHONE     15   STRING
+ACCTBAL   16   FLOAT
+MKTSEGMENT 10  STRING
+COMMENT    117 STRING
+
+功能2：
+解释：得到orders_index 和customer_index文件，存放Btree索引信息，在/mydata 目录下，索引利于快速地定位数据。
+为两个表格主键建立索引：
+1）为orders建立索引： INDEX orders 
+2）。。。。。。。。： INDEX customer
+
+功能3：外排训+压缩数据
+解释：只针对orders的CUSTKEY进行外排序，得到一个有序的文件orders_CUSTKEY和对应于原始文件中的位置文件orders_CUSTKEY_sortpos, (在exdata/目录下)，排序后
+     即可进行数据压缩（RLE压缩），压缩得到orders_CUSTKEY_COM文件（exdata/）;排序后也有利于后面的连接操作。
+语句：COMPRESS orders CUSTKEY
+
+/*接下来可以愉快地查询了TTTTTTTTTTT*/
+
+功能4，查询实例：
+解释，其中的自然连接提供了两种连接方式，一种是循环嵌套索引，效率极低（QAQ），得到indexJoin文件（mydata/）;
+      另外一种是利用上面排序所得进行NJjoin,效率很快,得到NJjoin（mydata/）,但是没时间写相应的查询接口，所以只能使用语句“NJJOIN”来获得连接文件
+      所以当使用双表查询时默认使用循环嵌套索引算法，第一次链接后，接下来查询均不需要再次连接。
+e.g.
+SELECT ORDERKEY ORDERDATE TOTALPRICE FROM orders WHERE ORDERKEY = 5
+
+SELECT CUSTKEY NAME ADDRESS PHONE FROM customer WHERE CUSTKEY < 100
+
+SELECT ORDERKEY ORDERDATE TOTALPRICE FROM orders WHERE ORDERKEY > 10 AND ORDERKEY < 100
+
+SELECT orders.ORDERKEY customer.CUSTKEY customer.ADDRESS FROM orders customer WHERE ORDERKEY > 10 AND ORDERKEY < 100 AND CUSTKEY > 10 AND CUSTKEY < 20000
+
